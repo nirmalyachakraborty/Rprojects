@@ -1,0 +1,199 @@
+install.packages("dplyr",dependencies = TRUE)
+install.packages("caret",dependencies = TRUE)
+install.packages("corrplot",dependencies = TRUE)
+install.packages("xgboost",dependencies = TRUE)
+install.packages("cowplot",dependencies = TRUE)
+install.packages("Hmisc",dependencies = TRUE)
+install.packages("glmnet",dependencies = TRUE)
+library(dplyr)
+library(data.table) 
+library(ggplot2)
+library(caret)
+library(xgboost)
+library(cowplot)
+library(corrplot)
+library(Hmisc)
+library(glmnet)
+
+setwd("C:/softwares/R Programs/Regression/Big mart sales")
+train = fread("Train.csv") 
+test = fread("Test.csv") 
+dim(train)
+dim(test)
+describe(train)
+# We will go ahead combine both train and test data and will carry out data visualization, feature engineering, one-hot encoding, and label encoding. Later we would split this combined data back to train and test datasets.
+test[,Item_Outlet_Sales := NA] 
+combi = rbind(train, test) 
+#####################Exploratory data analysis (EDA)#################
+#Let’s start with univariate EDA. It involves exploring variables individually. We will try to visualize the continuous variables using histograms and categorical variables using bar plots
+
+ggplot(train) + geom_histogram(aes(train$Item_Outlet_Sales), binwidth = 100, fill = "darkgreen") +  xlab("Item_Outlet_Sales")
+#As you can see, it is a right skewd variable and would need some data transformation to treat its skewness.
+
+p1 = ggplot(combi) + geom_histogram(aes(Item_Weight), binwidth = 0.5, fill = "blue")
+p2 = ggplot(combi) + geom_histogram(aes(Item_Visibility), binwidth = 0.005, fill = "green")
+p3 = ggplot(combi) + geom_histogram(aes(Item_MRP), binwidth = 1, fill = "red") 
+plot_grid(p1, p2, p3, nrow = 1) # plot_grid() from cowplot package
+#Observation
+#There seems to be no clear-cut pattern in Item_Weight.
+#Item_Visibility is right-skewed and should be transformed to curb its skewness.
+#We can clearly see 4 different distributions for Item_MRP. It is an interesting insight.
+
+ggplot(combi %>% group_by(Item_Fat_Content) %>% summarise(Count = n())) +   geom_bar(aes(Item_Fat_Content, Count), stat = "identity", fill = "coral1")
+# So we see that LF and Low fat , Low Fat are all the same sameway Regular and reg are same So we transform them
+combi$Item_Fat_Content[combi$Item_Fat_Content == "LF"] = "Low Fat" 
+combi$Item_Fat_Content[combi$Item_Fat_Content == "low fat"] = "Low Fat" 
+combi$Item_Fat_Content[combi$Item_Fat_Content == "reg"] = "Regular"
+ggplot(combi %>% group_by(Item_Fat_Content) %>% summarise(Count = n())) +   geom_bar(aes(Item_Fat_Content, Count), stat = "identity", fill = "coral1")
+
+# plot for Item_Type ,Outlet_Identifier and Outlet size
+p4 = ggplot(combi %>% group_by(Item_Type) %>% summarise(Count = n())) +   geom_bar(aes(Item_Type, Count), stat = "identity", fill = "coral1") +  xlab("") +  geom_label(aes(Item_Type, Count, label = Count), vjust = 0.5) +  theme(axis.text.x = element_text(angle = 45, hjust = 1))+  ggtitle("Item_Type")
+p5 = ggplot(combi %>% group_by(Outlet_Identifier) %>% summarise(Count = n())) +   geom_bar(aes(Outlet_Identifier, Count), stat = "identity", fill = "coral1") +  geom_label(aes(Outlet_Identifier, Count, label = Count), vjust = 0.5) +  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p6 = ggplot(combi %>% group_by(Outlet_Size) %>% summarise(Count = n())) +   geom_bar(aes(Outlet_Size, Count), stat = "identity", fill = "coral1") +  geom_label(aes(Outlet_Size, Count, label = Count), vjust = 0.5) +  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+second_row = plot_grid(p5, p6, nrow = 1) 
+plot_grid(p4, second_row, ncol = 1)
+
+p7 = ggplot(combi %>% group_by(Outlet_Establishment_Year) %>% summarise(Count = n())) +   geom_bar(aes(factor(Outlet_Establishment_Year), Count), stat = "identity", fill = "coral1") +  geom_label(aes(factor(Outlet_Establishment_Year), Count, label = Count), vjust = 0.5) +  xlab("Outlet_Establishment_Year") +  theme(axis.text.x = element_text(size = 8.5))
+p8 = ggplot(combi %>% group_by(Outlet_Type) %>% summarise(Count = n())) +   geom_bar(aes(Outlet_Type, Count), stat = "identity", fill = "coral1") +  geom_label(aes(factor(Outlet_Type), Count, label = Count), vjust = 0.5) +  theme(axis.text.x = element_text(size = 8.5))
+plot_grid(p7, p8, ncol = 2)
+
+########################Bivariate Analysis##############################
+#Here we’ll explore the independent variables with respect to the target variable. The objective is to discover hidden relationships between the independent variable and the target variable and use those findings in missing data imputation and feature engineering
+#We will make use of scatter plots for the continuous or numeric variables and violin plots for the categorical variables.
+train = combi[1:nrow(train)] # as we need the target variable
+# Item_Weight vs Item_Outlet_Sales 
+p9 = ggplot(train) +      geom_point(aes(Item_Weight, Item_Outlet_Sales), colour = "violet", alpha = 0.3) +     theme(axis.title = element_text(size = 8.5))
+# Item_Visibility vs Item_Outlet_Sales
+p10 = ggplot(train) +       geom_point(aes(Item_Visibility, Item_Outlet_Sales), colour = "violet", alpha = 0.3) +      theme(axis.title = element_text(size = 8.5))
+# Item_MRP vs Item_Outlet_Sales
+p11 = ggplot(train) +       geom_point(aes(Item_MRP, Item_Outlet_Sales), colour = "violet", alpha = 0.3) +      theme(axis.title = element_text(size = 8.5))
+second_row_2 = plot_grid(p10, p11, ncol = 2) 
+plot_grid(p9, second_row_2, nrow = 2)
+#Observations
+#Item_Outlet_Sales is spread well across the entire range of the Item_Weight without any obvious pattern.
+#In Item_Visibility vs Item_Outlet_Sales, there is a string of points at Item_Visibility = 0.0 which seems strange as item visibility cannot be completely zero. We will take note of this issue and deal with it in the later stages.
+#In the third plot of Item_MRP vs Item_Outlet_Sales, we can clearly see 4 segments of prices that can be used in feature engineering to create a new variable.
+#Target variable vs Independent Categorical variables
+#We could have used boxplots here, but instead we’ll use the violin plots as they show the full distribution of the data. The width of a violin plot at a particular level indicates the concentration or density of data at that level. The height of a violin tells us about the range of the target variable values.
+# Item_Type vs Item_Outlet_Sales 
+p12 = ggplot(train) +       geom_violin(aes(Item_Type, Item_Outlet_Sales), fill = "magenta") +      theme(axis.text.x = element_text(angle = 45, hjust = 1),            axis.text = element_text(size = 6),            axis.title = element_text(size = 8.5))
+# Item_Fat_Content vs Item_Outlet_Sales 
+p13 = ggplot(train) +       geom_violin(aes(Item_Fat_Content, Item_Outlet_Sales), fill = "magenta") +      theme(axis.text.x = element_text(angle = 45, hjust = 1),            axis.text = element_text(size = 8),            axis.title = element_text(size = 8.5))
+# Outlet_Identifier vs Item_Outlet_Sales 
+p14 = ggplot(train) +       geom_violin(aes(Outlet_Identifier, Item_Outlet_Sales), fill = "magenta") +      theme(axis.text.x = element_text(angle = 45, hjust = 1),            axis.text = element_text(size = 8),            axis.title = element_text(size = 8.5))
+second_row_3 = plot_grid(p13, p14, ncol = 2) 
+plot_grid(p12, second_row_3, ncol = 1)
+
+################Imputing missing data#################
+#explore the data set to find the missing values of the columns
+missingds <-sapply(combi,function(x) sum(is.na(x)))#missingds will contain count of NA across all columns
+View(missingds)
+#so Item weight has NAs
+#We’ll now impute Item_Weight with mean weight based on the Item_Identifier variable.
+missing_index = which(is.na(combi$Item_Weight)) 
+for(i in missing_index)
+{    item = combi$Item_Identifier[i]
+     combi$Item_Weight[i] = mean(combi$Item_Weight[combi$Item_Identifier == item], na.rm = T) }
+#Replace zero values in Item visibility  with Item_Identifier wise mean values of Item_Visibility.
+zero_index = which(combi$Item_Visibility == 0) 
+for(i in zero_index)
+{    item = combi$Item_Identifier[i]  
+     combi$Item_Visibility[i] = mean(combi$Item_Visibility[combi$Item_Identifier == item], na.rm = T)  }
+ggplot(combi) + geom_histogram(aes(Item_Visibility), bins = 100)
+
+#####################Feature Engineering###############################
+#We can have a look at the Item_Type variable and classify the categories into perishable and non_perishable as per our understanding and make it into a new feature.
+perishable = c("Breads", "Breakfast", "Dairy", "Fruits and Vegetables", "Meat", "Seafood")
+non_perishable = c("Baking Goods", "Canned", "Frozen Foods", "Hard Drinks", "Health and Hygiene", "Household", "Soft Drinks")
+# create a new feature 'Item_Type_new' 
+combi[,Item_Type_new := ifelse(Item_Type %in% perishable, "perishable", ifelse(Item_Type %in% non_perishable, "non_perishable", "not_sure"))]
+#create a new feature based on the iTem identifier code
+combi[,Item_category := substr(combi$Item_Identifier, 1, 2)]
+table(combi$Item_Type, substr(combi$Item_Identifier, 1, 2))
+#We will also change the values of Item_Fat_Content wherever Item_category is ‘NC’ because non-consumable items cannot have any fat content.
+combi$Item_Fat_Content[combi$Item_category == "NC"] = "Non-Edible" 
+#We will also create a couple of more features — Outlet_Years (years of operation) and price_per_unit_wt (price per unit weight).
+combi[,Outlet_Years := 2013 - Outlet_Establishment_Year] 
+combi$Outlet_Establishment_Year = as.factor(combi$Outlet_Establishment_Year) 
+combi[,price_per_unit_wt := Item_MRP/Item_Weight]
+
+# creating new independent variable - Item_MRP_clusters 
+combi[,Item_MRP_clusters := ifelse(Item_MRP < 69, "1st",
+                                   ifelse(Item_MRP >= 69 & Item_MRP < 136, "2nd", 
+                                          ifelse(Item_MRP >= 136 & Item_MRP < 203, "3rd", "4th")))]
+
+#############################Encoding Categorical Variables################
+#Label encoding simply means converting each category in a variable to a number. It is more suitable for ordinal variables — categorical variables with some order.
+#In One hot encoding, each category of a categorical variable is converted into a new binary column (1/0).
+combi[,Outlet_Size_num := ifelse(Outlet_Size == "Small", 0,   
+                                 ifelse(Outlet_Size == "Medium", 1, 2))] 
+combi[,Outlet_Location_Type_num := ifelse(Outlet_Location_Type == "Tier 3", 0,
+                                          ifelse(Outlet_Location_Type == "Tier 2", 1, 2))] 
+# removing categorical variables after label encoding 
+combi[, c("Outlet_Size", "Outlet_Location_Type") := NULL]
+#One hot encoding for the categorical variable
+ohe = dummyVars("~.", data = combi[,-c("Item_Identifier", "Outlet_Establishment_Year", "Item_Type")], fullRank = T) 
+ohe_df = data.table(predict(ohe, combi[,-c("Item_Identifier", "Outlet_Establishment_Year", "Item_Type")])) 
+combi = cbind(combi[,"Item_Identifier"], ohe_df)
+
+###################data transformation, data scaling ########################
+#Removing Skewness
+#In our data, variables Item_Visibility and price_per_unit_wt are highly skewed. So, we will treat their skewness with the help of log transformation.
+combi[,Item_Visibility := log(Item_Visibility + 1)] # log + 1 to avoid division by zero 
+combi[,price_per_unit_wt := log(price_per_unit_wt + 1)]
+
+####Scaling numeric predictors
+#Let’s scale and center the numeric variables to make them have a mean of zero, standard deviation of one and scale of 0 to 1. Scaling and centering is required for linear regression models.
+num_vars = which(sapply(combi, is.numeric)) # index of numeric features
+num_vars_names = names(num_vars)
+combi_numeric = combi[,setdiff(num_vars_names, "Item_Outlet_Sales"), with = F] 
+prep_num = preProcess(combi_numeric, method=c("center", "scale"))
+combi_numeric_norm = predict(prep_num, combi_numeric)
+combi[,setdiff(num_vars_names, "Item_Outlet_Sales") := NULL] # removing numeric independent 
+combi = cbind(combi, combi_numeric_norm)
+train = combi[1:nrow(train)] 
+test = combi[(nrow(train) + 1):nrow(combi)] 
+test[,Item_Outlet_Sales := NULL] # removing Item_Outlet_Sales as it contains only NA for test dataset
+
+###########Correlation matrix
+cor_train = cor(train[,-c("Item_Identifier")]) 
+corrplot(cor_train, method = "pie", type = "lower", tl.cex = 0.9)
+
+#######################Model Building###################
+#We will build the following models in the next sections.
+#1.     Linear Regression
+#2.     Lasso Regression
+#3.     Ridge Regression
+#4.     RandomForest
+#5.     XGBoost
+
+#Evaluation Metrics for Regression
+#The process of model building is not complete without evaluation of model’s performance. That’s why we need an evaluation metric to evaluate our model. Since this is a regression problem, we can evaluate our models using any one of the following evaluation metrics:
+#1.    Mean Absolute Error (MAE) is the mean of the absolute value of the errors:
+#2.    Mean Squared Error (MSE) is the mean of the squared errors:
+#3.    Root Mean Squared Error (RMSE) is the square root of the mean of the squared errors:
+
+#Simple Linear regression
+#remove duplicated columns if any
+train[,unique(names(train)),with=FALSE]
+linear_reg_mod = lm(Item_Outlet_Sales ~ ., data = train[,-c("Item_Identifier")])
+#Residual sum of squares:
+RSS <- c(crossprod(linear_reg_mod$residuals))
+#Mean squared error:
+MSE <- RSS / length(linear_reg_mod$residuals)
+#Root MSE:
+RMSE <- sqrt(MSE) #1127
+
+#####Regularised regression models can handle the correlated independent variables well and helps in overcoming overfitting. Ridge penalty shrinks the coefficients of correlated predictors towards each other, while the Lasso tends to pick one of a pair of correlated features and discard the other. The tuning parameter lambda controls the strength of the penalty.
+#Lasso Regression using Cross validation with k=5
+set.seed(1235) 
+my_control = trainControl(method="cv", number=5) 
+Grid = expand.grid(alpha = 1, lambda = seq(0.001,0.1,by = 0.0002)) 
+lasso_linear_reg_mod = train(x = train[, -c("Item_Identifier", "Item_Outlet_Sales")], y = train$Item_Outlet_Sales, 
+                                                  method='glmnet', trControl= my_control, tuneGrid = Grid)
+
+RSS <- c(crossprod(lasso_linear_reg_mod$residuals))
+#Mean squared error:
+MSE <- RSS / length(lasso_linear_reg_mod$residuals)
+#Root MSE:
+RMSE <- sqrt(MSE) #1127
